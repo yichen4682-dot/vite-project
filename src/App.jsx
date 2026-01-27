@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import axios from "axios";
 import * as bootstrap from "bootstrap";
-
 import "./assets/style.css";
 
 const API_BASE = import.meta.env.VITE_API_BASE;
@@ -18,7 +17,7 @@ const INITIAL_TEMPLATE_DATA = {
   content: "",
   is_enabled: false,
   imageUrl: "",
-  imagesUrl: [],
+  imagesUrl: [""]
 };
 
 function App() {
@@ -27,31 +26,89 @@ function App() {
     password: "",
   });
   const [isAuth, setIsAuth] = useState(false);
-  const [templateProduct, setTemplateProduct] = useState(INITIAL_TEMPLATE_DATA);
   const [products, setProducts] = useState([]);
+  const [templateProduct, setTemplateProduct] = useState(INITIAL_TEMPLATE_DATA);
   const [modalType, setModalType] = useState("");
 
   const productModalRef = useRef(null);
 
-  // 登入表單 input 變更
+  useEffect(() => {
+    // 讀取 cookie 判斷是否已登入
+    const cookieToken = document.cookie
+      .split("; ")
+      .find((row) => row.startsWith("yichenToken="))
+      ?.split("=")[1];
+
+    if (cookieToken) {
+      axios.defaults.headers.common["Authorization"] = cookieToken;
+      setIsAuth(true);
+      getProducts();
+    }
+
+    // 初始化 Modal
+    productModalRef.current = new bootstrap.Modal("#productModal", {
+      keyboard: false,
+    });
+  }, []);
+
   const handleInputChange = (e) => {
     const { name, value } = e.target;
-    setFormData((preData) => ({
-      ...preData,
-      [name]: value,
-    }));
+    setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
-  // Modal 表單 input 變更
-  const handleProductChange = (e) => {
-    const { name, value, type, checked } = e.target;
-    setTemplateProduct((prev) => ({
-      ...prev,
-      [name]: type === "checkbox" ? checked : value,
-    }));
+
+  const updateProduct = async (id) =>{
+   let url = `${API_BASE}/api/${API_PATH}/admin/product` 
+   let method = 'post';
+  
+  if (modalType ==='edit') {
+    url =`${API_BASE}/api/${API_PATH}/admin/product/${id}`
+    method = 'put'
+  }
+  
+ const productData = {
+  data: {
+    ...templateProduct,
+    origin_price: Number(templateProduct.origin_price),
+    price: Number(templateProduct.price),
+    is_enabled: templateProduct.is_enabled ? 1 : 0,
+    imagesUrl: templateProduct.imagesUrl.filter((url) => url !== ""),
+  },
+};
+
+
+  try {
+    const response = await axios[method](url,productData)
+    console.log(response.data)
+    getProducts();
+    closeModal();
+  } catch (error) {
+    console.log(error.response);
+  }
+
+
+  }
+
+
+
+  const onSubmit = async (e) => {
+    e.preventDefault();
+    try {
+      const response = await axios.post(`${API_BASE}/admin/signin`, formData);
+      const { token, expired } = response.data;
+      document.cookie = `yichenToken=${token};expires=${new Date(
+        expired
+      ).toUTCString()};path=/`;
+      axios.defaults.headers.common["Authorization"] = token;
+      setIsAuth(true);
+      setFormData((prev) => ({ ...prev, password: "" }));
+      getProducts();
+    } catch (error) {
+      console.log("登入錯誤:", error.response);
+      setIsAuth(false);
+    }
   };
 
-  // 取得產品列表
   const getProducts = async () => {
     try {
       const response = await axios.get(`${API_BASE}/api/${API_PATH}/admin/products`);
@@ -61,56 +118,77 @@ function App() {
     }
   };
 
-  // 登入
-  const onSubmit = async (e) => {
-    e.preventDefault();
-    try {
-      const response = await axios.post(`${API_BASE}/admin/signin`, formData);
-      const { token, expired } = response.data;
-      document.cookie = `yichenToken=${token};expires=${new Date(expired)};path=/`;
-      axios.defaults.headers.common["Authorization"] = token;
-
-      setIsAuth(true);
-      getProducts();
-    } catch (error) {
-      setIsAuth(false);
-      console.log(error.response);
-    }
-  };
-
-  // 初始化
-  useEffect(() => {
-    const token = document.cookie
-      .split("; ")
-      .find((row) => row.startsWith("yichenToken="))
-      ?.split("=")[1];
-    if (token) {
-      axios.defaults.headers.common["Authorization"] = token;
-      setIsAuth(true);
-      getProducts();
-    }
-
-    productModalRef.current = new bootstrap.Modal("#productModal", {
-      keyboard: false,
-    });
-  }, []);
-
-  // 開啟 Modal
   const openModal = (type, product) => {
-    setModalType(type);
-    setTemplateProduct(product);
-    productModalRef.current.show();
+  setModalType(type);
+  setTemplateProduct({
+    ...INITIAL_TEMPLATE_DATA,
+    ...product,
+    imagesUrl: product.imagesUrl?.length ? product.imagesUrl : [""],
+  });
+  productModalRef.current.show();
+};
+
+  const closeModal = () => productModalRef.current.hide();
+
+  const handleProductChange = (e) => {
+    const { name, value, type, checked } = e.target;
+    setTemplateProduct((prev) => ({
+      ...prev,
+      [name]: type === "checkbox" ? checked : value,
+    }));
   };
 
-  // 關閉 Modal
-  const closeModal = () => {
-    productModalRef.current.hide();
+  const handleModalImageChange = (index, value) => {
+    setTemplateProduct((prev) => {
+      const newImages = [...prev.imagesUrl];
+      newImages[index] = value;
+
+      // 自動新增空白欄位（最多 5 張）
+      if (value !== "" && index === newImages.length - 1 && newImages.length < 5) {
+        newImages.push("");
+      }
+
+      // 自動刪除最後空白欄位
+      if (value === "" && index === newImages.length - 2 && newImages[newImages.length - 1] === "") {
+        newImages.pop();
+      }
+
+      return { ...prev, imagesUrl: newImages };
+    });
+  };
+
+  const deleteProduct = async (id) => {
+  try {
+    await axios.delete(
+      `${API_BASE}/api/${API_PATH}/admin/product/${id}`
+    );
+    getProducts();
+    closeModal();
+  } catch (error) {
+    console.log(error.response);
+  }
+};
+
+
+  const addImageField = () => {
+    setTemplateProduct((prev) => {
+      if (prev.imagesUrl.length >= 5) return prev;
+      return { ...prev, imagesUrl: [...prev.imagesUrl, ""] };
+    });
+  };
+
+  const removeImageField = (index) => {
+    setTemplateProduct((prev) => {
+      const newImages = [...prev.imagesUrl];
+      newImages.splice(index, 1);
+      return { ...prev, imagesUrl: newImages };
+    });
   };
 
   return (
     <>
       {!isAuth ? (
-        <div className="container login">
+        <div className="container login" style={{ backgroundColor: "#f5f5f5", minHeight: "100vh" }}>
           <h1>請先登入</h1>
           <form className="form-floating" onSubmit={onSubmit}>
             <div className="form-floating mb-3">
@@ -118,7 +196,7 @@ function App() {
                 type="email"
                 className="form-control"
                 name="username"
-                placeholder="name@example.com"
+                placeholder="Email"
                 value={formData.username}
                 onChange={handleInputChange}
               />
@@ -143,7 +221,6 @@ function App() {
       ) : (
         <div className="container mt-3">
           <div className="row">
-            {/* 左邊產品列表 */}
             <div className="col-md-6">
               <h2>產品列表</h2>
               <div className="text-end mt-3 mb-3">
@@ -183,7 +260,10 @@ function App() {
                           >
                             編輯
                           </button>
-                          <button className="btn btn-outline-danger btn-sm">刪除</button>
+                          <button className="btn btn-outline-danger btn-sm"
+                          onClick={()=>openModal('delete',product)}>
+                            刪除
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -192,7 +272,6 @@ function App() {
               </table>
             </div>
 
-            {/* 右邊產品明細 */}
             <div className="col-md-6">
               <h2>產品明細</h2>
               {templateProduct ? (
@@ -241,17 +320,26 @@ function App() {
       <div className="modal fade" id="productModal" tabIndex="-1" aria-hidden="true">
         <div className="modal-dialog modal-xl">
           <div className="modal-content border-0">
-            <div className="modal-header bg-dark text-white">
+            <div className={`modal-header bg-${modalType === 'delete'? 'danger' : 'dark'} text-white`}>
               <h5 className="modal-title">
-                {modalType === "edit" ? "編輯產品" : "新增產品"}
+                {modalType === "delete" ? "刪除" : 
+                modalType === 'edit' ? "編輯": "新增"}產品
               </h5>
               <button type="button" className="btn-close" onClick={closeModal}></button>
             </div>
             <div className="modal-body">
-              <div className="row">
-                {/* 左側圖片 */}
+              {
+                modalType ==='delete'? (
+                 <p className="fs-4">
+	  確定要刪除
+	  <span className="text-danger">{templateProduct.title}</span>嗎？
+	</p> 
+                ):(
+<div className="row">
                 <div className="col-sm-4 mb-3">
-                  <label className="form-label">主圖網址</label>
+                  <label className="form-label">
+                    主圖網址
+                  </label>
                   <input
                     type="text"
                     className="form-control mb-2"
@@ -267,15 +355,35 @@ function App() {
                       className="img-fluid mb-2"
                     />
                   )}
-                  <button className="btn btn-outline-primary btn-sm w-100 mb-2">
+
+                  {templateProduct.imagesUrl.map((url, index) => (
+                    <div key={index} className="mb-2">
+                      <input
+                        type="text"
+                        className="form-control mb-1"
+                        value={url}
+                        onChange={(e) => handleModalImageChange(index, e.target.value)}
+                      />
+                      {url && <img src={url} alt={`副圖${index + 1}`} className="img-fluid mb-1" />}
+                      <button
+                        className="btn btn-outline-danger btn-sm w-100 mb-1"
+                        onClick={() => removeImageField(index)}
+                        type="button"
+                      >
+                        刪除圖片
+                      </button>
+                    </div>
+                  ))}
+
+                  <button
+                    className="btn btn-outline-primary btn-sm w-100"
+                    onClick={addImageField}
+                    type="button"
+                  >
                     新增圖片
-                  </button>
-                  <button className="btn btn-outline-danger btn-sm w-100">
-                    刪除圖片
                   </button>
                 </div>
 
-                {/* 右側表單 */}
                 <div className="col-sm-8">
                   <div className="mb-3">
                     <label className="form-label">標題</label>
@@ -285,6 +393,7 @@ function App() {
                       name="title"
                       value={templateProduct.title}
                       onChange={handleProductChange}
+                      placeholder="請輸入標題"
                     />
                   </div>
                   <div className="row">
@@ -296,6 +405,7 @@ function App() {
                         name="category"
                         value={templateProduct.category}
                         onChange={handleProductChange}
+                        placeholder="請輸入分類"
                       />
                     </div>
                     <div className="mb-3 col-md-6">
@@ -306,6 +416,7 @@ function App() {
                         name="unit"
                         value={templateProduct.unit}
                         onChange={handleProductChange}
+                        placeholder="請輸入單位"
                       />
                     </div>
                   </div>
@@ -318,6 +429,7 @@ function App() {
                         name="origin_price"
                         value={templateProduct.origin_price}
                         onChange={handleProductChange}
+                        placeholder="請輸入原價"
                       />
                     </div>
                     <div className="mb-3 col-md-6">
@@ -328,6 +440,7 @@ function App() {
                         name="price"
                         value={templateProduct.price}
                         onChange={handleProductChange}
+                        placeholder="請輸入售價"
                       />
                     </div>
                   </div>
@@ -338,6 +451,7 @@ function App() {
                       name="description"
                       value={templateProduct.description}
                       onChange={handleProductChange}
+                      placeholder="請輸入產品描述"
                     ></textarea>
                   </div>
                   <div className="mb-3">
@@ -347,6 +461,7 @@ function App() {
                       name="content"
                       value={templateProduct.content}
                       onChange={handleProductChange}
+                      placeholder="請輸入說明內容"
                     ></textarea>
                   </div>
                   <div className="form-check mb-3">
@@ -361,13 +476,33 @@ function App() {
                   </div>
                 </div>
               </div>
-            </div>
 
+                )
+              }
+              
+            </div>
             <div className="modal-footer">
-              <button className="btn btn-outline-secondary" onClick={closeModal}>
+              <button
+                className="btn btn-outline-secondary"
+                onClick={closeModal}
+                type="button"
+              >
                 取消
               </button>
-              <button className="btn btn-primary">確認</button>
+            <button
+  className={`btn btn-${modalType === "delete" ? "danger" : "primary"}`}
+  type="button"
+  onClick={() => {
+    if (modalType === "delete") {
+      deleteProduct(templateProduct.id);
+    } else {
+      updateProduct(templateProduct.id);
+    }
+  }}
+>
+  確認
+</button>
+
             </div>
           </div>
         </div>
